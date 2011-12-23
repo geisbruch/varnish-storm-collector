@@ -18,34 +18,46 @@ import com.ml.storm.varnishlog.spouts.VarnishReaderSpout;
 
 import backtype.storm.Config;
 import backtype.storm.LocalCluster;
+import backtype.storm.StormSubmitter;
+import backtype.storm.generated.AlreadyAliveException;
+import backtype.storm.generated.InvalidTopologyException;
+import backtype.storm.generated.Nimbus.Client;
+import backtype.storm.generated.Nimbus.Iface;
 import backtype.storm.topology.TopologyBuilder;
 import backtype.storm.tuple.Fields;
 
 public class Topology {
 
-	public static void main(String[] args) {
+	public static void main(String[] args) throws AlreadyAliveException, InvalidTopologyException {
 		TopologyBuilder topology = new TopologyBuilder();
-		Map<String, Integer> hosts = new HashMap<String, Integer>();
+		Map<String, String> hosts = new HashMap<String, String>();
+		Config conf = new Config();
+		
 		int i=0;
 		for(String str : args[i].split(",")){
 			String[] h = str.split(":");
-			hosts.put(h[0], Integer.parseInt(h[1]));
+			hosts.put(h[0], h[1]);
 		}
-		
-		Config conf = new Config();
+		conf.put("varnishHosts", hosts);
 		conf.put("namenodeUrl", args[++i]);
 		conf.put("hadoopPath", args[++i]);
 		conf.put("intervalInMinutes", Long.parseLong(args[++i]));
 		
-		int spouts = checkValue(hosts.size());
+		int spouts = checkValue(Math.max(hosts.size(),10));
 		int parsers = checkValue(spouts);
 		int filter = checkValue(parsers / 2);
 		int collector = checkValue(hosts.size());
 		int messageCreater = checkValue(collector / 2);
 		int savers = checkValue(messageCreater);
 		
+		int total = (spouts+parsers+filter+collector+messageCreater+savers) / 3;
+		
+		int workers = Math.min(40, total);
+		conf.setNumWorkers(workers);
+		conf.setNumAckers(3);
+		
 		Logger.getLogger("httpclient").setLevel(Level.ERROR);
-		topology.setSpout("varnishlog-spout", new VarnishReaderSpout(hosts), spouts);
+		topology.setSpout("varnishlog-spout", new VarnishReaderSpout(), spouts);
 		
 		topology.setBolt("varnish-line-parser", new VarnishLineParser(),parsers)
 			.fieldsGrouping("varnishlog-spout", new Fields("host","session"));
@@ -70,9 +82,10 @@ public class Topology {
 		topology.setBolt("varnish-hadoop-saver", new VarnishHadoopSaver(),savers)
 			.shuffleGrouping("varnish-message-creator");
 		
-		LocalCluster cluster = new LocalCluster();
+		StormSubmitter.submitTopology("varnish-log-collector",conf, topology.createTopology());
 		
-		cluster.submitTopology("test", conf, topology.createTopology());
+//		LocalCluster cluster = new LocalCluster();
+//		cluster.submitTopology("test", conf, topology.createTopology());
 		
 		
 	}

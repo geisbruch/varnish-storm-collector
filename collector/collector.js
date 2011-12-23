@@ -14,12 +14,6 @@ var queues = {}
 var readed = 0;
 var sended = 0;
 
-http.createServer(function (req, res) {
-      res.writeHead(200, {'Content-Type': 'application/json'});
-      res.end('{}')
-}).listen(8080, "127.0.0.1");
-
-
 /*
  * Create server where the server will be connected to receive the 
  * output log stream

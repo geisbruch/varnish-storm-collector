@@ -1,2 +1,5 @@
 target/
 *.class
+*.swo
+*.swp
+*.swa

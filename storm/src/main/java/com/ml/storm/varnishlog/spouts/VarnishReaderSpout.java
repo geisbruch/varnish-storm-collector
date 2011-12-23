@@ -25,10 +25,9 @@ public class VarnishReaderSpout implements IRichSpout{
 	
 	private SpoutOutputCollector collector;
 
-	Map<String,Integer> hosts;
+	Map<String,String> hosts;
 	
-	public VarnishReaderSpout(Map<String,Integer> hosts) {
-		this.hosts = hosts;
+	public VarnishReaderSpout() {
 	}
 	
 	public boolean isDistributed() {
@@ -67,11 +66,13 @@ public class VarnishReaderSpout implements IRichSpout{
 	public void open(Map conf, TopologyContext context,
 			SpoutOutputCollector collector) {
 		this.collector = collector;
+		this.hosts = (Map<String, String>) conf.get("varnishHosts");
+		
 		List<Integer> tasks = context.getComponentTasks(context.getThisComponentId());
 		
 		Integer i = 0;
-		for(Map.Entry<String, Integer> entry : hosts.entrySet()){
-			LogsClient client = new LogsClient(queue, entry.getKey(), entry.getValue(), QUEUE_NAME);
+		for(Map.Entry<String, String> entry : hosts.entrySet()){
+			LogsClient client = new LogsClient(queue, entry.getKey(), Integer.parseInt(entry.getValue()), QUEUE_NAME);
 			new Thread(client,"Spout_"+context.getThisTaskId()+"_Client_"+(i++)).start();
 		}
 	}

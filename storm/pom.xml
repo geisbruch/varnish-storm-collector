@@ -4,6 +4,23 @@
   <artifactId>VarnishlogTopology</artifactId>
   <version>0.0.1-SNAPSHOT</version>
   
+  <build>
+  	<plugins>
+	  <plugin>
+		  <artifactId>maven-assembly-plugin</artifactId>
+		  <configuration>
+		  	<descriptors>
+                <descriptor>assembly.xml</descriptor>
+            </descriptors>
+		    <archive>
+		      <manifest>
+		        <mainClass>com.ml.storm.varnishlog.topologies.Topology</mainClass>
+		      </manifest>
+		    </archive>
+		  </configuration>
+		</plugin>
+  	</plugins>
+  </build>
   
   <repositories>
         
@@ -29,7 +46,7 @@
           <groupId>storm</groupId>
           <artifactId>storm</artifactId>
           <version>0.6.0</version>
-       </dependency>
+        </dependency>
 
         <dependency>
         	<groupId>org.apache.zookeeper</groupId>
@@ -53,4 +70,5 @@
         	<scope>compile</scope>
         </dependency>
   </dependencies>
+  
 </project>

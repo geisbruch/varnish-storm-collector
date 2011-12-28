@@ -75,7 +75,8 @@ public class VarnishReaderSpout implements IRichSpout{
 		VarnishLog message;
 		
 		while((message = queue.poll())!=null){
-			collector.emit(new Values(message.server,message.session,message.message));
+			if(!"".equals(message.message.trim()))
+				collector.emit(new Values(message.server,message.message));
 		}
 		
 		/**
@@ -151,7 +152,7 @@ public class VarnishReaderSpout implements IRichSpout{
 	}
 	
 	public void declareOutputFields(OutputFieldsDeclarer declarer) {
-		declarer.declare(new Fields("host","session","line"));
+		declarer.declare(new Fields("host","line"));
 	}
 
 }

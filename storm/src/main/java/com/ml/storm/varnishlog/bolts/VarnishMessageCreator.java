@@ -6,6 +6,7 @@ import java.util.Calendar;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.json.simple.JSONObject;
 
@@ -29,53 +30,64 @@ public class VarnishMessageCreator implements IBasicBolt {
 	@Override
 	public void execute(Tuple input, BasicOutputCollector collector) {
 		String host = input.getStringByField("host");
-		String session = input.getStringByField("session");
-		List<VarnishMessage> messageList = (List<VarnishMessage>) input.getValueByField("messageList");
-		
+		Map<Object,Object> messageList = (Map) input.getValueByField("message");
 		Map<String, Object> obj = new HashMap<String, Object>();
-		obj.put("hasBackend", false);
+		
 		/**
 		 * For each message check convert type and add to a map
 		 */
-		for(VarnishMessage message : messageList){
+		for(Map.Entry<Object,Object> message : messageList.entrySet()){
+
+			if(!"backendLogs".equals(message.getKey().toString()) && !"clientLogs".equals(message.getKey().toString())){
+				obj.put(message.getKey().toString(), message.getValue());
+			}
 			
-			String objName = getObjByCon(message.connectionType,message.messageType);
-			
-			if(message.messageType.toLowerCase().contains("header")){
-				objName = objName+"s";
-				/**
-				 * if the message it's a header we will create an other map
-				 */
-				if(!obj.containsKey(objName)){
-					obj.put(objName, new HashMap<String, Object>());
-				}
-				Map<String, Object> map = (Map<String, Object>)obj.get(objName);
-				addHeader(message,map);
-			}else if(message.messageType.startsWith("VCL_")){
-				/**
-				 * If it's a vcl we will use a list 
-				 */
-				objName = getObjByCon(message.connectionType,"VCL");
-				if(!obj.containsKey(objName)){
-					obj.put(objName, new ArrayList<String>());
-				}
-				((List<String>)obj.get(objName)).add(message.messageType.split("_")[1]+" "+message.messageLog);
-			}else{
-				/**
-				 * Else assume string
-				 */
+		}
+		
+		addEntries((List)messageList.get("backendLogs"),obj,"backend");
+		addEntries((List) messageList.get("clientLogs"),obj,"client");
+		
+		System.out.println(JSONObject.toJSONString(obj));
+		
+		collector.emit(new Values(obj));
+	}
+
+		
+	private void addEntries(List messageList, Map<String, Object> obj, String prefix) {
+		for(Object message : messageList){
+			String[] split = message.toString().split("\t");
+			if(split.length == 2){
+				String messageType = split[0];
+				String messageLog = split[1];
+				String objName = getObjByCon(prefix,messageType);
 				
-				if("Backend".equals(message.messageType)){
-					obj.put("hasBackend", true);
+				if(messageType.toLowerCase().contains("header")){
+					objName = objName+"s";
+					/**
+					 * if the message it's a header we will create an other map
+					 */
+					if(!obj.containsKey(objName)){
+						obj.put(objName, new HashMap<String, Object>());
+					}
+					Map<String, Object> map = (Map<String, Object>)obj.get(objName);
+					addHeader(messageLog,map);
+				}else if(messageType.startsWith("VCL_")){
+					/**
+					 * If it's a vcl we will use a list 
+					 */
+					objName = getObjByCon(prefix,"VCL");
+					if(!obj.containsKey(objName)){
+						obj.put(objName, new ArrayList<String>());
+					}
+					((List<String>)obj.get(objName)).add(messageType.split("_")[1]+" "+messageLog);
 				}else{
-					obj.put(objName, message.messageLog);
+					/**
+					 * Else assume string
+					 */
+					obj.put(objName, messageLog);
 				}
 			}
 		}
-		obj.put("date", getDate());
-		obj.put("host", host);
-		obj.put("session", session);
-		collector.emit(new Values(host,session,obj));
 	}
 
 
@@ -83,22 +95,20 @@ public class VarnishMessageCreator implements IBasicBolt {
 		return format.format(Calendar.getInstance().getTime());
 	}
 
-	private void addHeader(VarnishMessage message, Map<String, Object> map) {
-		int idx = message.messageLog.indexOf(":");
+	private void addHeader(String messageLog, Map<String, Object> map) {
+		int idx = messageLog.indexOf(":");
 		if(idx!=-1){
-			String headerName = message.messageLog.substring(0,idx);
+			String headerName = messageLog.substring(0,idx);
 			String headerContent = "";
-			if(message.messageLog.length() >= idx){
-				headerContent = message.messageLog.substring(idx+1);
+			if(messageLog.length() >= idx){
+				headerContent = messageLog.substring(idx+1);
 			}
 			map.put(headerName, headerContent);
 		}
 	}
 
-	private String getObjByCon(String connectionType, String messageType) {
-		if("c".equals(connectionType.toLowerCase()))
-			return "client"+messageType;
-		return "backend"+messageType;
+	private String getObjByCon(String connectionPrefix, String messageType) {
+		return connectionPrefix+messageType;
 	}
 
 	private boolean isMap(String messageType) {
@@ -112,7 +122,7 @@ public class VarnishMessageCreator implements IBasicBolt {
 
 	@Override
 	public void declareOutputFields(OutputFieldsDeclarer declarer) {
-		declarer.declare(new Fields("host","session","varnishMessage"));		
+		declarer.declare(new Fields("varnishMessage"));		
 	}
 
 

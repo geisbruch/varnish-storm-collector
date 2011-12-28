@@ -4,13 +4,9 @@ import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.Queue;
-
 import org.apache.commons.httpclient.HttpClient;
-import org.apache.commons.httpclient.HttpConnection;
-import org.apache.commons.httpclient.methods.GetMethod;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.HttpGet;
-import org.apache.http.client.methods.HttpUriRequest;
 import org.apache.http.conn.HttpHostConnectException;
 import org.apache.http.impl.client.DefaultHttpClient;
 import org.apache.log4j.Logger;
@@ -51,9 +47,7 @@ public class LogsClient implements Runnable{
 				String line;
 				log.info("Start reading");
 				while((line = reader.readLine())!=null){
-					int idx = line.indexOf('\t');
-					String session = line.substring(0,idx);
-					queue.add(new VarnishLog(host,session,line.substring(idx+1)));
+					queue.add(new VarnishLog(host,line));
 				}
 				log.info("Connection to ["+url+"] lost");
 			} catch(HttpHostConnectException e){

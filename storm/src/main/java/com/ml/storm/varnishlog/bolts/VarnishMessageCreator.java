@@ -42,6 +42,7 @@ public class VarnishMessageCreator implements IBasicBolt {
 			String objName = getObjByCon(message.connectionType,message.messageType);
 			
 			if(message.messageType.toLowerCase().contains("header")){
+				objName = objName+"s";
 				/**
 				 * if the message it's a header we will create an other map
 				 */

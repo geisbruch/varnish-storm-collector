@@ -4,6 +4,10 @@ var http = require('http'),
      carrier = require('carrier'),
      ZooKeeper = require("zookeeper"),
      os = require('os');
+
+
+var sessions={}
+     
 var child;
 
 var conns = []
@@ -19,6 +23,12 @@ var sended = 0;
  * output log stream
  *
 */
+
+http.createServer(function (req, res) {
+    res.writeHead(200,"OK");
+    res.end("Hola mundo");
+}).listen(8080,"0.0.0.0")
+
 http.createServer(function (req, res) {
       var path = req.url
       var sp = path.split('/');
@@ -34,62 +44,80 @@ http.createServer(function (req, res) {
           queues[roundQueueName]=roundQueue()
       }
 
-      queues[roundQueueName].add(res)
+      queues[roundQueueName].add(res.connection)
       res.writeHead(200, {'Content-Type': 'application/json'});
       console.log("Connection taked [queue: "+roundQueueName+"]");
-}).listen(1337, "127.0.0.1");
+}).listen(1337, "0.0.0.0");
 
 var p = 0;
 
 commandRunner = function(){
-/*    zk = new ZooKeeper({
+    zkPath=process.argv[3]+"/"+os.hostname()
+    zk = new ZooKeeper({
           connect: process.argv[2],
-          timeout: 200000,
+          timeout: 22000,
           debug_level: ZooKeeper.ZOO_LOG_LEVEL_WARN,
           host_order_deterministic: false
     })
-    console.log("Connecting to: "+process.argv[2])
-    zk.connect(function(err){})
-//    zk.a_create('/1/2/3',{"hola":"mundo"},0,function(rc,error,path){})   
-    zk.a_get('/1/2/3',true,function(rc,error,stat,data){
-    console.log("Error %j, %j, %j, %s",rc,error,stat,JSON.parse(data).data);
-    })
+   console.log("Connecting to: "+process.argv[2])
+   zk.connect(function(err){
+     console.log(os.hostname())
+     zk.a_create(zkPath,null,0,function(rc,error,path){
+         zk.close()
+     })   
 
-    zk.a_set('/1/2/3',JSON.stringify({"data":"dadas","pepep":"dasd"}),-1,function(rc,error,stat){
-    console.log("Error %j, %j, %j",rc,error,stat);
-    })
- */
-   child = spawn("varnishlog",["-u"]);
-    carrierReader = carrier.carry(child.stdout)
-    carrierReader.on('line', function(line){
+   })
+   child = spawn("varnishlog",["-u","-n","/tmp/varnish2"]);
+   carrierReader = carrier.carry(child.stdout)
+   var errors = 0;
+   carrierReader.on('line', function(line){
         readed++;
         for(qs in queues){
             queues[qs].send(line,null,function(error){
-                console.log("Error: "+error.msg)
+                errors++;
+                if(errors % 1000 == 0){
+                    console.log("Message losts ["+errors+"]")
+                }
             })
         }
-    });
+   });
+
+   process.on('SIGINT',function(){
+       zk.a_delete_(zkPath,function(rc,error){
+           zk.close();
+       })
+       console.log("Exiting")
+       process.exit(0);
+   })
 }
 
 commandRunner()
 
 
 roundQueue = function(){
-    var obj = {lastIndex:0,conns:[]}
+    var obj = {lastIndex:0,conns:[],lastId:0}
     var messageParser = /(\d+) +(\w*) +(c|b|-) +(.*)/
     obj.add = function(connection){
+        connection.bufferSize = 100024
+        connection.internalId=obj.lastId
+        obj.lastId++;
         connection.on("drain",function(){
-            console.log("Connection restablished "+connection)
-            obj.conns.push(connection)
+            sended++; 
+            obj.conns.push(connection) 
         }) 
         this.conns.push(connection)
+        connection.on("close",function(){
+            console.log("Remove closed connection ["+connection.internalId+"]");
+            obj.removeConnection(connection.internalId);
+        })
+
     }
     
     obj.get = function(ses){
         if(this.size()<=0)
             return null;
-        if(ses!=null){
-            this.lastIndex++;
+        if(ses == null || ses == undefined){
+           this.lastIndex++;
             if(this.lastIndex >= this.conns.length)
                 this.lastIndex=0;
     
@@ -107,45 +135,69 @@ roundQueue = function(){
     }
 
     obj.send = function(message,valid,fail){
+        message = message.trim()
         var parse = this.parseLine(message)
-        var sessions = null
         if(parse.logSession>0){
-            sessions = []
-            if(parse["backendSession"] != undefined){
-                sessions.push(parse["backendSession"]);
+            var lSes =  parse.logSession
+            if(sessions[lSes] == undefined || sessions[lSes] == null){
+                sessions[lSes] = {"logSession":lSes,clientLogs:[],backendLogs:[],hasBackend:false}
             }
-            sessions.push(parse.logSession);
+            
+            if(parse["backendSession"] != undefined){
+                sessions[lSes].hasBackend=true;
+                sessions[lSes].backendSession=parse["backendSession"]
+            }
+
+            var messageLog = parse["messageType"]+"\t"+parse["messageLog"]
+            if(parse["connectionType"] == "b"){
+                sessions[lSes].backendLogs.push(messageLog);
+            }else{
+                sessions[lSes].clientLogs.push(messageLog);
+            }
+
+            if(parse["messageType"]=="ReqEnd"){
+                var logObj = sessions[lSes]
+                if(logObj.hasBackend){
+                    bLogObj = sessions[logObj.backendSession];
+                    if(bLogObj != null && bLogObj != undefined) {
+                        logObj.backendLogs = bLogObj.backendLogs
+                        delete sessions[logObj.backendSession]
+                    }else{
+                        console.log("Not found backend");
+                    }
+                }
+                this.sendMessageToSocket(sessions[lSes],valid,fail)
+                delete sessions[lSes];
+            }else{
+                if(valid != null)
+                    valid()
+                return;
+            }
         }else{
             return;
         }
+    }
 
-        errors = false;
-
-        for(i in sessions){
-            var ses = sessions[i]
-            var sended = false;
-            while(this.size()>0 && !sended){
-                var con = this.get(ses)
-                console.log
-                var mes = con.write(ses+"\t"+message)
+    obj.sendMessageToSocket = function(message,valid,fail){
+         while(this.size() > 0){
+            var con = this.get()
+            try{
+                var mes = con.write(JSON.stringify(message))
                 var crlf = con.write(CRLF);
                 var res = mes && crlf;
                 if(res){
                     if(valid!=null)
-                        valid();
-                    sended++;
-                    sended = true;
+                        valid()
+                    return;
                 }else{
-                    console.log("Connection removed ["+this.lastIndex+"]")
-                    this.removeActualConnection();
+                     obj.removeConnection(con.internalId);                                     
                 }
+            }catch(e){
+                obj.removeConnection(con.internalId);                                     
             }
-            if(!sended && fail!=null){
-                 fail({msg:"No conns available"})
-                 return;
-            }
-
         }
+        if(fail != null)
+            fail({"msg":"Error message can't be sended"})
     }
 
     obj.parseLine = function(line){
@@ -162,11 +214,21 @@ roundQueue = function(){
         return ret
     }
 
-    obj.removeActualConnection = function(){
+    obj.removeConnection = function(id){
         if(this.size()<=0){
             return;
         }
-        this.conns.splice(this.lastIndex,1)
+        var idx = 0
+        var found = false;
+        for(i in this.conns){
+            if(this.conns[i].internalId == id){
+                found = true;
+                idx = i;
+            }
+
+        }
+        if(found)
+            this.conns.splice(idx,1)
     }
 
     return obj

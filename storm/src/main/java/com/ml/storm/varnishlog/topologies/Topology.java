@@ -6,6 +6,7 @@ import java.util.Map;
 import org.apache.log4j.Level;
 import org.apache.log4j.Logger;
 import org.apache.zookeeper.ZooKeeper;
+import org.apache.zookeeper.data.Stat;
 
 import com.ml.storm.varnishlog.bolts.BackendCollector;
 import com.ml.storm.varnishlog.bolts.BackendMessageFilter;
@@ -21,6 +22,7 @@ import backtype.storm.LocalCluster;
 import backtype.storm.StormSubmitter;
 import backtype.storm.generated.AlreadyAliveException;
 import backtype.storm.generated.InvalidTopologyException;
+import backtype.storm.generated.Nimbus;
 import backtype.storm.generated.Nimbus.Client;
 import backtype.storm.generated.Nimbus.Iface;
 import backtype.storm.topology.TopologyBuilder;
@@ -30,29 +32,22 @@ public class Topology {
 
 	public static void main(String[] args) throws AlreadyAliveException, InvalidTopologyException {
 		TopologyBuilder topology = new TopologyBuilder();
-		Map<String, String> hosts = new HashMap<String, String>();
 		Config conf = new Config();
 		
-		int i=0;
-		for(String str : args[i].split(",")){
-			String[] h = str.split(":");
-			hosts.put(h[0], h[1]);
-		}
-		conf.put("varnishHosts", hosts);
+		int i=-1;
 		conf.put("namenodeUrl", args[++i]);
 		conf.put("hadoopPath", args[++i]);
 		conf.put("intervalInMinutes", Long.parseLong(args[++i]));
-		
-		int spouts = checkValue(Math.max(hosts.size(),10));
+		conf.put("zkHosts", args[++i]);
+		conf.put("zkPath", args[++i]);
+		int spouts = 15;
 		int parsers = checkValue(spouts);
 		int filter = checkValue(parsers / 2);
-		int collector = checkValue(hosts.size());
+		int collector = checkValue(spouts);
 		int messageCreater = checkValue(collector / 2);
 		int savers = checkValue(messageCreater);
 		
-		int total = (spouts+parsers+filter+collector+messageCreater+savers) / 3;
-		
-		int workers = Math.min(40, total);
+		int workers = 20;
 		conf.setNumWorkers(workers);
 		conf.setNumAckers(3);
 		
@@ -83,7 +78,7 @@ public class Topology {
 			.shuffleGrouping("varnish-message-creator");
 		
 		StormSubmitter.submitTopology("varnish-log-collector",conf, topology.createTopology());
-		
+
 //		LocalCluster cluster = new LocalCluster();
 //		cluster.submitTopology("test", conf, topology.createTopology());
 		

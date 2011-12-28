@@ -1,6 +1,7 @@
 package com.ml.storm.varnishlog.bolts;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.List;
@@ -38,7 +39,7 @@ public class VarnishHadoopSaver implements IBasicBolt {
 	Long interval;
 	Path actualPathWithoutTmp;
 	Path actualPath;
-	private FSDataOutputStream actualOut;
+	private OutputStream actualOut;
 	
 	static Logger LOG = Logger.getLogger(VarnishHadoopSaver.class);
 	
@@ -73,8 +74,8 @@ public class VarnishHadoopSaver implements IBasicBolt {
 				LOG.info("Creating new file ["+newFile+"]");
 				FSDataOutputStream out = fs.create(actualPath);
 				LOG.info("Creating output stream");
-//				actualOut = codec.createOutputStream(out);
-				actualOut = out;
+				actualOut = codec.createOutputStream(out);
+//				actualOut = out;
 			}
 			
 			Map<String, Object> map = (Map<String, Object>) input.getValueByField("varnishMessage");

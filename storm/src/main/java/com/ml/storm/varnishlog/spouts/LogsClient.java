@@ -11,6 +11,7 @@ import org.apache.commons.httpclient.methods.GetMethod;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpUriRequest;
+import org.apache.http.conn.HttpHostConnectException;
 import org.apache.http.impl.client.DefaultHttpClient;
 import org.apache.log4j.Logger;
 
@@ -24,6 +25,7 @@ public class LogsClient implements Runnable{
 	private String queueName;
 	
 	Logger log = Logger.getLogger(LogsClient.class);
+	private boolean finished = false;
 	
 	public LogsClient(Queue<VarnishLog> queue,String host, Integer port,String queueName) {
 		this.queue = queue;
@@ -36,7 +38,7 @@ public class LogsClient implements Runnable{
 	@Override
 	public void run() {
 		HttpGet get;
-		while(true){
+		while(!finished){
 			String url = null;
 			try {
 				url = getHostUrl(host,port);
@@ -54,15 +56,25 @@ public class LogsClient implements Runnable{
 					queue.add(new VarnishLog(host,session,line.substring(idx+1)));
 				}
 				log.info("Connection to ["+url+"] lost");
-				Thread.sleep(500);
+			} catch(HttpHostConnectException e){
+				log.warn("Connection error to host ["+url+"]");
 			} catch (Exception e) {
 				log.error("Error getting messages from ["+url+"]",e);
+			}finally{
+				try {
+					Thread.sleep(500);
+				} catch (InterruptedException e) {}
 			}
 		}
+		log.info("Thread interrupter, finishing thread");
 	}
 
 	private String getHostUrl(String host, Integer port) {
 		return "http://"+host+":"+port+"/"+queueName;
+	}
+
+	public void setFinished() {
+		finished  = true;
 	}
 
 }

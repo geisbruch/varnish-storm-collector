@@ -1,0 +1,17 @@
+{
+    "workers":1,
+    "spouts":1,
+    "parsers":1,
+    "messageCreators":1,
+    "savers":1,
+    "namenodeUrl":"hdfs://127.0.0.1:8020",
+    "hadoopPath":"/tmp/varnish",
+    "intervalInMinutes":2,
+    "zkHosts":"127.0.0.1:2182",
+    "zkPath":"/varnish",
+    "connectionsPerVarnish":3,
+    "infraApiUrl":"http://127.0.0.1:8080",
+    "dbConnection":"jdbc:mysql://localhost/statistic?user=root&password=root",
+    "expirationPoolsCache":172800,
+    "debug":true
+}

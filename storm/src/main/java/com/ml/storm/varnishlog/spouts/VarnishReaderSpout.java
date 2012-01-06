@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.apache.log4j.Logger;
 import org.apache.zookeeper.CreateMode;
@@ -49,6 +51,9 @@ public class VarnishReaderSpout implements IRichSpout{
 	private String zkPath;
 	
 	Integer clients = 0;
+
+	Integer module;
+	Integer moduleToTake;
 	
 	
 	public VarnishReaderSpout() {
@@ -92,6 +97,19 @@ public class VarnishReaderSpout implements IRichSpout{
 			SpoutOutputCollector collector) {
 		this.collector = collector;
 		this.zkPath = (String) conf.get("zkPath");
+		
+		int connectionsPerVarnish = ((Number)conf.get("connectionsPerVarnish")).intValue();
+		List<Integer> ids = context.getComponentTasks(context.getThisComponentId());
+		module = ids.size() / connectionsPerVarnish;
+		module = module < 1 ? 1: module;
+		
+		for(int i = 0; i<ids.size(); i++){
+			if(ids.get(i).equals(context.getThisTaskId())){
+				this.moduleToTake = i % this.module;
+			}
+		}
+		
+		
 		try {
 			final ZooKeeper zk = new ZooKeeper((String) conf.get("zkHosts"),60000,new NullWatcher());
 			
@@ -135,12 +153,18 @@ public class VarnishReaderSpout implements IRichSpout{
 	
 	
 	private void createLoader(String host,TopologyContext context) {
-		LOG.info("Adding connection connection to ["+host+"]");
 		childs.add(host);
-		LogsClient client = new LogsClient(queue, host, COLLECTOR_PORT, QUEUE_NAME);
-		Thread t = new Thread(client,"Spout_"+context.getThisTaskId()+"_Client_"+(clients++));
-		t.start();
-		readers.put(host, client);
+		Integer hostId;
+		hostId = Math.abs(host.hashCode());
+		int mod = hostId % module;
+		LOG.info("hostId: "+hostId+" module: "+module+" moduleToTake: "+moduleToTake);
+		if(moduleToTake.equals(mod)){
+			LOG.info("Adding connection to ["+host+"]");
+			LogsClient client = new LogsClient(queue, host, COLLECTOR_PORT, QUEUE_NAME);
+			Thread t = new Thread(client,"Spout_"+context.getThisTaskId()+"_Client_"+(clients++));
+			t.start();
+			readers.put(host, client);
+		}
 	}
 
 	private void destroyLoader(String host){

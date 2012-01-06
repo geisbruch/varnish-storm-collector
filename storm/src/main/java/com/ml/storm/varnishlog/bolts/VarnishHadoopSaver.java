@@ -81,7 +81,7 @@ public class VarnishHadoopSaver implements IBasicBolt {
 			Map<String, Object> map = (Map<String, Object>) input.getValueByField("varnishMessage");
 			actualOut.write((JSONObject.toJSONString(map)+"\n").getBytes());
 			
-		} catch (IOException e) {
+		} catch (Exception e) {
 			LOG.error("Error writing in hadoop",e);
 			LOG.error("Sleeping 5 secconds");
 			try {

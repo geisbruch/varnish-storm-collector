@@ -6,9 +6,6 @@ var http = require('http'),
      os = require('os');
 
 
-var sessions={}
-     
-var child;
 
 var conns = []
 var i = 0;
@@ -23,12 +20,6 @@ var sended = 0;
  * output log stream
  *
 */
-
-http.createServer(function (req, res) {
-    res.writeHead(200,"OK");
-    res.end("Hola mundo");
-}).listen(8080,"0.0.0.0")
-
 http.createServer(function (req, res) {
       var path = req.url
       var sp = path.split('/');
@@ -39,13 +30,23 @@ http.createServer(function (req, res) {
           return;
       }
       var roundQueueName = sp[1] 
+      res.writeHead(200, {'Content-Type': 'application/json'});
+    
+      if(req.method == 'DELETE' ){
+          console.log("Deleting queue ["+roundQueueName+"]")
+          if(queues[roundQueueName] != undefined){
+              queues[roundQueueName].closeConnections()
+              delete queues[roundQueueName]
+          }
+          res.end()
+          return
+      }
       
       if(queues[roundQueueName]==null){
           queues[roundQueueName]=roundQueue()
       }
 
-      queues[roundQueueName].add(res.connection)
-      res.writeHead(200, {'Content-Type': 'application/json'});
+      queues[roundQueueName].add(res)
       console.log("Connection taked [queue: "+roundQueueName+"]");
 }).listen(1337, "0.0.0.0");
 
@@ -53,6 +54,7 @@ var p = 0;
 
 commandRunner = function(){
     zkPath=process.argv[3]+"/"+os.hostname()
+    console.log(zkPath)
     zk = new ZooKeeper({
           connect: process.argv[2],
           timeout: 22000,
@@ -67,7 +69,7 @@ commandRunner = function(){
      })   
 
    })
-   child = spawn("varnishlog",["-u","-n","/tmp/varnish2"]);
+   child = spawn("varnishlog",["-u"])
    carrierReader = carrier.carry(child.stdout)
    var errors = 0;
    carrierReader.on('line', function(line){
@@ -75,7 +77,7 @@ commandRunner = function(){
         for(qs in queues){
             queues[qs].send(line,null,function(error){
                 errors++;
-                if(errors % 1000 == 0){
+                if(errors % 100 == 0){
                     console.log("Message losts ["+errors+"]")
                 }
             })
@@ -83,11 +85,27 @@ commandRunner = function(){
    });
 
    process.on('SIGINT',function(){
-       zk.a_delete_(zkPath,function(rc,error){
-           zk.close();
-       })
-       console.log("Exiting")
-       process.exit(0);
+    console.log("Exiting")
+    if(zk != undefined && zk != null)
+        zk.close();
+
+        zk = new ZooKeeper({
+          connect: process.argv[2],
+          timeout: 22000,
+          debug_level: ZooKeeper.ZOO_LOG_LEVEL_WARN,
+          host_order_deterministic: false
+        })
+
+    zk.connect(function(err){
+        zk.a_get(zkPath,false,function(rc,error,stat,data){
+            zk.a_delete_(zkPath, stat.version,function(rc,error){
+               zk.close()  
+            })
+        })
+    })
+    setTimeout(function(){
+        process.exit(0)
+    },1000)
    })
 }
 
@@ -95,10 +113,9 @@ commandRunner()
 
 
 roundQueue = function(){
-    var obj = {lastIndex:0,conns:[],lastId:0}
+    var obj = {lastIndex:0,conns:[],lastId:0,sessions:{}}
     var messageParser = /(\d+) +(\w*) +(c|b|-) +(.*)/
     obj.add = function(connection){
-        connection.bufferSize = 100024
         connection.internalId=obj.lastId
         obj.lastId++;
         connection.on("drain",function(){
@@ -137,44 +154,40 @@ roundQueue = function(){
     obj.send = function(message,valid,fail){
         message = message.trim()
         var parse = this.parseLine(message)
-        if(parse.logSession>0){
+        if(parse != null && parse.logSession>0){
             var lSes =  parse.logSession
-            if(sessions[lSes] == undefined || sessions[lSes] == null){
-                sessions[lSes] = {"logSession":lSes,clientLogs:[],backendLogs:[],hasBackend:false}
+            if(this.sessions[lSes] == undefined || this.sessions[lSes] == null){
+                this.sessions[lSes] = {"logSession":lSes,clientLogs:[],backendLogs:[],hasBackend:false}
             }
             
             if(parse["backendSession"] != undefined){
-                sessions[lSes].hasBackend=true;
-                sessions[lSes].backendSession=parse["backendSession"]
+                this.sessions[lSes].hasBackend=true;
+                this.sessions[lSes].backendSession=parse["backendSession"]
             }
 
             var messageLog = parse["messageType"]+"\t"+parse["messageLog"]
             if(parse["connectionType"] == "b"){
-                sessions[lSes].backendLogs.push(messageLog);
+                this.sessions[lSes].backendLogs.push(messageLog);
             }else{
-                sessions[lSes].clientLogs.push(messageLog);
+                this.sessions[lSes].clientLogs.push(messageLog);
             }
 
             if(parse["messageType"]=="ReqEnd"){
-                var logObj = sessions[lSes]
+                var logObj = this.sessions[lSes]
                 if(logObj.hasBackend){
-                    bLogObj = sessions[logObj.backendSession];
+                    bLogObj = this.sessions[logObj.backendSession];
                     if(bLogObj != null && bLogObj != undefined) {
                         logObj.backendLogs = bLogObj.backendLogs
-                        delete sessions[logObj.backendSession]
-                    }else{
-                        console.log("Not found backend");
+                        delete this.sessions[logObj.backendSession]
                     }
                 }
-                this.sendMessageToSocket(sessions[lSes],valid,fail)
-                delete sessions[lSes];
+                this.sendMessageToSocket(this.sessions[lSes],valid,fail)
+                delete this.sessions[lSes];
+                return;
             }else{
                 if(valid != null)
                     valid()
-                return;
             }
-        }else{
-            return;
         }
     }
 
@@ -231,8 +244,15 @@ roundQueue = function(){
             this.conns.splice(idx,1)
     }
 
+    obj.closeConnections = function(){
+        for(i in this.conns){
+            this.conns[i].close()
+        }
+    }
+
     return obj
 }
 
 
 console.log('Server running at http://127.0.0.1:1337/');
+

@@ -1,21 +1,25 @@
 package com.ml.storm.varnishlog.topologies;
 
-import java.util.HashMap;
-import java.util.Map;
+import java.io.FileNotFoundException;
+import java.io.FileReader;
+import java.io.IOException;
 
 import org.apache.log4j.Level;
 import org.apache.log4j.Logger;
-import org.apache.zookeeper.ZooKeeper;
-import org.apache.zookeeper.data.Stat;
+import org.apache.thrift7.TProcessor;
+import org.apache.thrift7.TProcessorFactory;
+import org.apache.thrift7.protocol.TBinaryProtocol;
+import org.apache.thrift7.transport.TServerSocket;
+import org.apache.thrift7.transport.TTransport;
+import org.json.simple.JSONObject;
+import org.json.simple.parser.JSONParser;
+import org.json.simple.parser.ParseException;
 
-import com.ml.storm.varnishlog.bolts.BackendCollector;
-import com.ml.storm.varnishlog.bolts.BackendMessageFilter;
-import com.ml.storm.varnishlog.bolts.ClientMessageFilter;
 import com.ml.storm.varnishlog.bolts.JSONParserBolt;
-import com.ml.storm.varnishlog.bolts.LogCollector;
+import com.ml.storm.varnishlog.bolts.NewRelicMetricsLoader;
 import com.ml.storm.varnishlog.bolts.VarnishHadoopSaver;
-import com.ml.storm.varnishlog.bolts.VarnishLineParser;
 import com.ml.storm.varnishlog.bolts.VarnishMessageCreator;
+import com.ml.storm.varnishlog.bolts.VarnishMetricsExtractor;
 import com.ml.storm.varnishlog.spouts.VarnishReaderSpout;
 
 import backtype.storm.Config;
@@ -23,32 +27,24 @@ import backtype.storm.LocalCluster;
 import backtype.storm.StormSubmitter;
 import backtype.storm.generated.AlreadyAliveException;
 import backtype.storm.generated.InvalidTopologyException;
-import backtype.storm.generated.Nimbus;
-import backtype.storm.generated.Nimbus.Client;
-import backtype.storm.generated.Nimbus.Iface;
 import backtype.storm.topology.TopologyBuilder;
-import backtype.storm.tuple.Fields;
 
 public class Topology {
 
-	public static void main(String[] args) throws AlreadyAliveException, InvalidTopologyException {
+	public static void main(String[] args) throws AlreadyAliveException, InvalidTopologyException, FileNotFoundException, IOException, ParseException {
 		TopologyBuilder topology = new TopologyBuilder();
 		Config conf = new Config();
 		
-		int i=-1;
-		conf.put("namenodeUrl", args[++i]);
-		conf.put("hadoopPath", args[++i]);
-		conf.put("intervalInMinutes", Long.parseLong(args[++i]));
-		conf.put("zkHosts", args[++i]);
-		conf.put("zkPath", args[++i]);
-		int spouts = 1;
-		int parsers = checkValue(spouts);
-		int filter = checkValue(parsers / 2);
-		int collector = checkValue(spouts);
-		int messageCreater = checkValue(collector / 2);
+		JSONParser p = new JSONParser();
+		JSONObject json = (JSONObject)p.parse(new FileReader(args[0]));
+		conf.putAll(json);
+		int spouts = ((Number) json.get("spouts")).intValue();
+		int workers = ((Number) json.get("workers")).intValue();
+		
+		int parsers = checkValue(((Number) json.get("parsers")).intValue());
+		int messageCreater = checkValue(((Number)json.get("messageCreators")).intValue());
 		int savers = checkValue(messageCreater);
 		
-		int workers = 1;
 		conf.setNumWorkers(workers);
 		conf.setNumAckers(3);
 		
@@ -59,22 +55,6 @@ public class Topology {
 		topology.setBolt("json-parser", new JSONParserBolt(),parsers)
 			.shuffleGrouping("varnishlog-spout");
 		
-//		topology.setBolt("varnish-line-parser", new VarnishLineParser(),parsers)
-//			.fieldsGrouping("varnishlog-spout", new Fields("host","session"));
-//
-//		topology.setBolt("varnish-client-filter", new ClientMessageFilter(),filter)
-//		.fieldsGrouping("varnish-line-parser", new Fields("host","session"));
-//		
-//		topology.setBolt("varnish-backend-filter", new BackendMessageFilter(), filter)
-//			.fieldsGrouping("varnish-line-parser", new Fields("host","session"));
-//		
-//		
-//		topology.setBolt("varnish-backend-collector", new BackendCollector(),collector)
-//			.fieldsGrouping("varnish-backend-filter", new Fields("host","session"));
-//		
-//		topology.setBolt("varnish-log-collector", new LogCollector(),collector)
-//			.fieldsGrouping("varnish-backend-collector", new Fields("host","session"))
-//			.fieldsGrouping("varnish-client-filter", new Fields("host","session"));
 			
 		topology.setBolt("varnish-message-creator", new VarnishMessageCreator(),messageCreater)
 			.shuffleGrouping("json-parser");
@@ -82,12 +62,19 @@ public class Topology {
 		topology.setBolt("varnish-hadoop-saver", new VarnishHadoopSaver(),savers)
 			.shuffleGrouping("varnish-message-creator");
 		
-//		StormSubmitter.submitTopology("varnish-log-collector",conf, topology.createTopology());
+		topology.setBolt("varnish-metrics-extractor", new VarnishMetricsExtractor()).
+			shuffleGrouping("varnish-message-creator");
+		
+		topology.setBolt("new-relic-emiter", new NewRelicMetricsLoader()).
+			shuffleGrouping("varnish-metrics-extractor");
+		
 
-		LocalCluster cluster = new LocalCluster();
-		cluster.submitTopology("test", conf, topology.createTopology());
-		
-		
+		if(json.containsKey("debug") && (Boolean)json.get("debug")){
+			LocalCluster cluster = new LocalCluster();
+			cluster.submitTopology("test1", conf, topology.createTopology());
+		}else{
+			StormSubmitter.submitTopology(json.get("topologyName").toString(),conf, topology.createTopology());
+		}
 	}
 
 	private static int checkValue(int i) {
